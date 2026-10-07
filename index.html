@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebAR Paper Toss</title>
+  <!-- A-Frame Library -->
+  <script src="https://aframe.io"></script>
+  <!-- AR.js for A-Frame -->
+  <script src="https://githack.com"></script>
+  <!-- A-Frame Physics System for collision and gravity -->
+  <script src="https://jsdelivr.net"></script>
+  
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    #ui {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 10; text-align: center; pointer-events: none;
+    }
+    .btn {
+      background: rgba(0, 0, 0, 0.7); color: white; border: 2px solid white;
+      padding: 10px 20px; font-size: 16px; border-radius: 20px; pointer-events: auto; cursor: pointer;
+    }
+    #score-board {
+      position: absolute; top: 20px; left: 20px; color: white;
+      font-size: 24px; font-weight: bold; text-shadow: 2px 2px 4px #000; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Score Display -->
+  <div id="score-board">Score: <span id="score">0</span></div>
+
+  <!-- UI Action Button -->
+  <div id="ui">
+    <button id="action-btn" class="btn">Tap Screen to Setup Basket</button>
+  </div>
+
+  <!-- AR Scene -->
+  <a-scene 
+    embedded 
+    arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
+    physics="debug: false; gravity: -9.8">
+    
+    <a-assets>
+      <!-- Visual texture for the paper ball -->
+      <img id="paper-texture" src="https://githubusercontent.com" crossorigin="anonymous">
+    </a-assets>
+
+    <!-- Camera -->
+    
+
+    <!-- Ambient Light -->
+    <a-light type="ambient" intensity="0.7"></a-light>
+    <a-light type="directional" intensity="0.5" position="1 2 1"></a-light>
+
+    <!-- Game Anchor (Where the game elements sit once placed) -->
+    
+      
+      <!-- Wastebasket / Bin -->
+      <!-- Made of a transparent cylinder wall and a solid static base to catch the ball -->
+      
+        <!-- Basket Rim/Sides -->
+        <a-cylinder radius="0.25" height="0.5" open-ended="true" color="#a8dadc" side="double" opacity="0.8"></a-cylinder>
+        <!-- Invisible scoring trigger zone inside the basket -->
+        <a-box id="score-trigger" width="0.4" height="0.1" depth="0.4" position="0 0.1 0" opacity="0" static-body></a-box>
+        <!-- Solid bottom to stop the ball -->
+        <a-cylinder radius="0.25" height="0.05" position="0 -0.23 0" color="#457b9d" static-body></a-cylinder>
+      
+
+    
+
+  </a-scene>
+
+  <script>
+    const actionBtn = document.getElementById('action-btn');
+    const gameZone = document.getElementById('game-zone');
+    const scoreElement = document.getElementById('score');
+    const scene = document.querySelector('a-scene');
+    
+    let gameState = 'PLACING_BASKET'; // Game stages: PLACING_BASKET, PLAYING
+    let score = 0;
+    let ballCount = 0;
+
+    // 1. Setup Phase: Place the basket in AR space
+    window.addEventListener('click', () => {
+      if (gameState === 'PLACING_BASKET') {
+        // Fixes the basket position 2 meters in front of wherever the user is looking
+        gameZone.setAttribute('visible', 'true');
+        gameState = 'PLAYING';
+        actionBtn.innerText = 'Toss Paper!';
+      } else if (gameState === 'PLAYING') {
+        tossPaper();
+      }
+    });
+
+    // Alternate trigger for the screen button
+    actionBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevents double-triggering the window click
+      if (gameState === 'PLACING_BASKET') {
+        gameZone.setAttribute('visible', 'true');
+        gameState = 'PLAYING';
+        actionBtn.innerText = 'Toss Paper!';
+      } else {
+        tossPaper();
+      }
+    });
+
+    // 2. Physics Gameplay: Spawn and throw a paper ball
+    function tossPaper() {
+      ballCount++;
+      const ballId = `ball-${ballCount}`;
+      
+      // Get the current camera position and direction to throw accurately
+      const cameraEl = document.querySelector('[camera]');
+      const camera3D = cameraEl.object3D;
+      
+      // Calculate throw vectors
+      const direction = new THREE.Vector3(0, 0, -1);
+      direction.applyQuaternion(camera3D.quaternion);
+      direction.normalize();
+
+      // Create the paper ball entity
+      const ball = document.createElement('a-sphere');
+      ball.setAttribute('id', ballId);
+      ball.setAttribute('radius', '0.08');
+      ball.setAttribute('src', '#paper-texture');
+      ball.setAttribute('color', '#f1faee');
+      
+      // Position the ball just in front of the camera lens
+      const spawnPos = new THREE.Vector3();
+      camera3D.getWorldPosition(spawnPos);
+      spawnPos.addScaledVector(direction, 0.2); // slight offset forward
+      ball.setAttribute('position', `${spawnPos.x} ${spawnPos.y} ${spawnPos.z}`);
+      
+      // Add physics body dynamics
+      ball.setAttribute('dynamic-body', 'mass: 0.1; restitution: 0.4;');
+      
+      scene.appendChild(ball);
+
+      // Apply initial impulse force after physics engine registers the body
+      ball.addEventListener('body-loaded', () => {
+        // Tweak impulse numbers to change throw strength/arc
+        const forceMagnitude = 0.5; 
+        const impulse = new THREE.Vector3(
+          direction.x * forceMagnitude,
+          (direction.y + 0.5) * forceMagnitude * 1.2, // Adds an upward arc to the toss
+          direction.z * forceMagnitude
+        );
+        
+        ball.body.applyImpulse(
+          new CANNON.Vec3(impulse.x, impulse.y, impulse.z),
+          new CANNON.Vec3(0, 0, 0)
+        );
+      });
+
+      // 3. Collision / Score Tracking
+      let scored = false;
+      ball.addEventListener('collisions', (e) => {
+        // Check if the ball hit the scoring zone inside the basket
+        if (e.detail.els.includes(document.getElementById('score-trigger')) && !scored) {
+          scored = true;
+          score++;
+          scoreElement.innerText = score;
+          
+          // Flash feedback color on successful score
+          document.getElementById('basket').firstElementChild.setAttribute('color', '#e63946');
+          setTimeout(() => {
+            document.getElementById('basket').firstElementChild.setAttribute('color', '#a8dadc');
+          }, 300);
+        }
+      });
+
+      // Cleanup old balls to maintain mobile performance
+      setTimeout(() => {
+        if (ball && ball.parentNode) {
+          ball.parentNode.removeChild(ball);
+        }
+      }, 5000);
+    }
+  </script>
+</body>
+</html>
